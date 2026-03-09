@@ -48,11 +48,18 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY)
 CALENDAR_ID = os.getenv('CALENDAR_ID', 'd51d3fcd4e9f373b3766d9198129f7af868315252002d7c69a9281d359946e51@group.calendar.google.com')
 
 # --- 2. AI EVENT EXTRACTION FUNCTION ---
-def extract_events_with_ai(url, original_title, retries=2):
+def extract_events_with_ai(url, original_title, retries=4):
     print(f"    > Detektīvs pārbauda: {url}")
 
     for attempt in range(retries):
+        if attempt < 2:
+            current_model = 'gemini-3.1-flash-lite-preview'
+        else:
+            # Piezīme: Pārbaudi precīzu modeļa nosaukumu savā sarakstā. 
+            current_model = 'gemma-2-27b-it'
+            
         try:
+            print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {current_model}")
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             html = urllib.request.urlopen(req, timeout=15).read()
             soup = BeautifulSoup(html, 'html.parser')
@@ -77,7 +84,7 @@ STRICT RULES:
 """
 
             response = ai_client.models.generate_content(
-                model='gemini-3.1-flash-lite-preview',
+                model=current_model,
                 contents=prompt
             )
 
@@ -90,8 +97,8 @@ STRICT RULES:
                 return events, url
             break
         except Exception as e:
-            print(f"      [!] Mēģinājums {attempt+1} neizdevās: {e}")
-            time.sleep(20)
+            print(f"      [!] Mēģinājums {attempt+1} neizdevās ({current_model}): {e}")
+            time.sleep(30)
 
     return [], url
 
