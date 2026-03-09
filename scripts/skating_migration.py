@@ -96,6 +96,7 @@ STRICT RULES:
     return [], url
 
 # --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
+# --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
 def process_found_events(found_events, source_url, existing_events, original_desc=""):
     for f_event in found_events:
         start_date = f_event.get('start_date')
@@ -106,7 +107,23 @@ def process_found_events(found_events, source_url, existing_events, original_des
         if not start_date or not start_date.startswith("2026"):
             continue
 
-        print(f"    -> Apstrādā: {title} ({start_date})")
+        # --- 14 DIENU PĀRBAUDE (Pievienots atpakaļ) ---
+        try:
+            start_dt_check = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt_check = datetime.strptime(end_date, "%Y-%m-%d")
+            
+            # Aprēķina starpību dienās
+            delta_days = (end_dt_check - start_dt_check).days
+            
+            if delta_days > 14 or delta_days < 0:
+                print(f"      [!] Datumu kļūda izlabota ({delta_days} dienas). Beigu datums = sākuma datums.")
+                end_date = start_date # Ignorējam kļūdaino beigu datumu
+        except ValueError:
+            print(f"      [!] Kļūdains datuma formāts: {start_date} vai {end_date}")
+            continue # Izlaižam šo notikumu, ja datums ir pilnīgi nesaprotams
+        # ---------------------------------------------
+
+        print(f"    -> Apstrādā: {title} ({start_date} - {end_date})")
 
         # Smart duplicate detection
         is_duplicate = False
@@ -134,6 +151,7 @@ def process_found_events(found_events, source_url, existing_events, original_des
 
         if is_duplicate:
             print(f"      [IZLAISTS] Jau ir kalendārā. Atjaunojam saiti...")
+            # Pārējā dublikātu loģika paliek nemainīga
             desc = matched_event.get('description', '')
             if source_url not in desc:
                 new_desc = desc + f"\n2026 link: {source_url}"
@@ -145,6 +163,7 @@ def process_found_events(found_events, source_url, existing_events, original_des
         else:
             # Create new calendar entry with proper end date handling
             try:
+                # Šeit mēs izmantojam jau pārbaudīto/izlaboto end_date
                 end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
                 final_end = end_dt.strftime("%Y-%m-%d")
 
@@ -163,7 +182,7 @@ def process_found_events(found_events, source_url, existing_events, original_des
                 print(f"      [+] PIEVIENOTS: {title}")
             except Exception as e:
                 print(f"      [!] Kļūda veidojot ierakstu: {e}")
-
+                
 # --- 4. MAIN EXECUTION ---
 def run_agent():
     print("Iegūst 2026. gada datus no kalendāra...")
