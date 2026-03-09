@@ -47,17 +47,15 @@ if not GEMINI_API_KEY:
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 CALENDAR_ID = os.getenv('CALENDAR_ID', 'd51d3fcd4e9f373b3766d9198129f7af868315252002d7c69a9281d359946e51@group.calendar.google.com')
 
+ACTIVE_MODEL = 'gemini-3.1-flash-lite-preview'
+
 # --- 2. AI EVENT EXTRACTION FUNCTION ---
 def extract_events_with_ai(url, original_title, retries=4):
+    global ACTIVE_MODEL
     print(f"    > Detektīvs pārbauda: {url}")
 
     for attempt in range(retries):
-        if attempt < 2:
-            current_model = 'gemini-3.1-flash-lite-preview'
-        else:
-            # Piezīme: Pārbaudi precīzu modeļa nosaukumu savā sarakstā. 
-            current_model = 'gemma-3-27b-it'
-            
+           
         try:
             print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {current_model}")
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -84,7 +82,7 @@ STRICT RULES:
 """
 
             response = ai_client.models.generate_content(
-                model=current_model,
+                model=ACTIVE_MODEL,
                 contents=prompt
             )
 
@@ -97,8 +95,18 @@ STRICT RULES:
                 return events, url
             break
         except Exception as e:
-            print(f"      [!] Mēģinājums {attempt+1} neizdevās ({current_model}): {e}")
-            time.sleep(30)
+            print(f"      [!] Mēģinājums {attempt+1} neizdevās ({ACTIVE_MODEL}): {e}")
+            error_msg = str(e)
+            
+            if ACTIVE_MODEL == 'gemini-3.1-flash-lite-preview':
+                if '429' in error_msg or 'Quota' in error_msg or attempt >= 1:
+                    print("      [!!!] Gemini limits sasniegts vai serveris atsakās strādāt.")
+                    print("      [!!!] Pārslēdzamies uz Gemma 3 visām turpmākajām saitēm!")
+                    ACTIVE_MODEL = 'gemma-3-27b-it'
+           
+            # Pagaidām tikai tad, ja mums vēl ir atlikuši mēģinājumi
+            if attempt < retries - 1:
+                time.sleep(30)
 
     return [], url
 
