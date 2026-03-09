@@ -50,25 +50,55 @@ CALENDAR_ID = os.getenv('CALENDAR_ID', 'd51d3fcd4e9f373b3766d9198129f7af86831525
 ACTIVE_MODEL = 'gemini-3.1-flash-lite-preview'
 
 # --- 2. AI EVENT EXTRACTION FUNCTION ---
-def extract_events_with_ai(url, original_title, retries=4):
+def extract_events_with_ai(original_url, original_title, retries=4):
     global ACTIVE_MODEL
-    print(f"    > Detektīvs pārbauda: {url}")
+    
+    print(f"    > Detektīvs sagatavo saites no: {original_url}")
 
-    for attempt in range(retries):
-           
+    # --- 1. SOLIS: Gudrā saišu ģenerēšana ---
+    urls_to_try = []
+    if '2025' in original_url:
+        urls_to_try.append(original_url.replace('2025', '2026'))
+    elif '25' in original_url:
+        urls_to_try.append(original_url.replace('25', '26'))
+    
+    if original_url not in urls_to_try:
+        urls_to_try.append(original_url) # Vienmēr atstājam oriģinālo saiti kā rezerves variantu
+
+    working_url = None
+    html_content = None
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5'
+    }
+
+    # --- 2. SOLIS: Pārbaudām, kura saite reāli eksistē ---
+    for test_url in urls_to_try:
         try:
-            print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {ACTIVE_MODEL}")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
-            }
-            req = urllib.request.Request(url, headers=headers)
-            html = urllib.request.urlopen(req, timeout=15).read()
-            soup = BeautifulSoup(html, 'html.parser')
-            content = soup.get_text(separator=' ', strip=True)[:20000]
+            print(f"      [?] Pārbauda lapas pieejamību: {test_url}")
+            req = urllib.request.Request(test_url, headers=headers)
+            response = urllib.request.urlopen(req, timeout=15)
+            html_content = response.read()
+            working_url = test_url
+            print(f"      [V] Lapa ielādēta! Izmantosim šo saiti.")
+            break # Līdzko atrod strādājošu saiti, pārtrauc meklēt citas
+        except Exception as e:
+            # Ja lapa neeksistē (404) vai liedz piekļuvi (403), klusām ejam pie nākamās saites
+            print(f"      [-] Saite nav pieejama ({e}).")
+            pass 
 
-            prompt = f"""
+    # Ja mājaslapa galīgi nestrādā nevienā no variantiem
+    if not working_url:
+        print(f"      [!!!] Neviena no saitēm nav pieejama vai liedz piekļuvi. Izlaižam.")
+        return [], original_url
+
+    # --- 3. SOLIS: Sagatavojam tekstu MI (Tikai vienreiz!) ---
+    soup = BeautifulSoup(html_content, 'html.parser')
+    content = soup.get_text(separator=' ', strip=True)[:20000]
+
+    prompt = f"""
 Objective: Extract 2026 INLINE SPEED SKATING (skrituļslidošana) race dates.
 Context: The user is interested in '{original_title}'.
 
@@ -86,6 +116,11 @@ STRICT RULES:
 5. Return STRICTLY a JSON array of objects. No markdown formatting.
 """
 
+    # --- 4. SOLIS: Sūtām datus MI un apstrādājam kļūdas ---
+    for attempt in range(retries):
+        try:
+            print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {ACTIVE_MODEL}")
+            
             response = ai_client.models.generate_content(
                 model=ACTIVE_MODEL,
                 contents=prompt
@@ -97,26 +132,25 @@ STRICT RULES:
 
             events = json.loads(clean_text)
             if isinstance(events, list):
-                return events, url
+                # ATGROŽAM TIKAI TO SAITI, KURA REĀLI STRĀDĀJA!
+                return events, working_url 
             break
+            
         except Exception as e:
             print(f"      [!] Mēģinājums {attempt+1} neizdevās ({ACTIVE_MODEL}): {e}")
             error_msg = str(e)
-            if 'HTTP Error 403' in error_msg or 'HTTP Error 404' in error_msg:
-                print("      [!!!] Mājaslapa liedz piekļuvi (403) vai neeksistē (404). Izlaižam šo saiti un ietaupam laiku.")
-                break
-                
+            
+            # Pārslēdzējs paliek neskarts un strādās perfekti
             if ACTIVE_MODEL == 'gemini-3.1-flash-lite-preview':
                 if '429' in error_msg or 'Quota' in error_msg or attempt >= 1:
                     print("      [!!!] Gemini limits sasniegts vai serveris atsakās strādāt.")
                     print("      [!!!] Pārslēdzamies uz Gemma 3 visām turpmākajām saitēm!")
                     ACTIVE_MODEL = 'gemma-3-27b-it'
            
-            # Pagaidām tikai tad, ja mums vēl ir atlikuši mēģinājumi
             if attempt < retries - 1:
                 time.sleep(30)
 
-    return [], url
+    return [], working_url
 
 # --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
 def process_found_events(found_events, source_url, existing_events, original_desc=""):
