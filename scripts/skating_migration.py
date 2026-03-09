@@ -58,7 +58,12 @@ def extract_events_with_ai(url, original_title, retries=4):
            
         try:
             print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {ACTIVE_MODEL}")
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5'
+            }
+            req = urllib.request.Request(url, headers=headers)
             html = urllib.request.urlopen(req, timeout=15).read()
             soup = BeautifulSoup(html, 'html.parser')
             content = soup.get_text(separator=' ', strip=True)[:20000]
@@ -97,7 +102,10 @@ STRICT RULES:
         except Exception as e:
             print(f"      [!] Mēģinājums {attempt+1} neizdevās ({ACTIVE_MODEL}): {e}")
             error_msg = str(e)
-            
+            if 'HTTP Error 403' in error_msg or 'HTTP Error 404' in error_msg:
+                print("      [!!!] Mājaslapa liedz piekļuvi (403) vai neeksistē (404). Izlaižam šo saiti un ietaupam laiku.")
+                break
+                
             if ACTIVE_MODEL == 'gemini-3.1-flash-lite-preview':
                 if '429' in error_msg or 'Quota' in error_msg or attempt >= 1:
                     print("      [!!!] Gemini limits sasniegts vai serveris atsakās strādāt.")
