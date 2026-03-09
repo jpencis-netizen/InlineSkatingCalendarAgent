@@ -1,57 +1,244 @@
+import urllib.request
+import urllib.error
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+from google import genai
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import re
+import time
+from datetime import datetime, timedelta
+import json
 import os
 import base64
-import requests
-from datetime import datetime, timedelta
 
-# Load configuration from environment variables
+# --- CONFIGURATION ---
+RUN_CLEANUP = os.getenv('RUN_CLEANUP', 'true').lower() == 'true'
+
+# --- 1. SETUP & AUTHENTICATION ---
+print("Autentifikācija...")
+
+SERVICE_ACCOUNT_JSON_B64 = os.getenv('SERVICE_ACCOUNT_JSON_B64')
+if SERVICE_ACCOUNT_JSON_B64:
+    service_account_json = base64.b64decode(SERVICE_ACCOUNT_JSON_B64).decode('utf-8')
+    service_account_dict = json.loads(service_account_json)
+else:
+    SERVICE_ACCOUNT_FILE = 'service_account.json'
+    with open(SERVICE_ACCOUNT_FILE, 'r') as f:
+        service_account_dict = json.load(f)
+
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+try:
+    creds = service_account.Credentials.from_service_account_info(
+        service_account_dict, scopes=SCOPES)
+    calendar_service = build('calendar', 'v3', credentials=creds)
+    print("✓ Autentifikācija veiksmīga!")
+except Exception as e:
+    print(f"✗ Autentifikācijas kļūda: {e}")
+    exit(1)
+
+# --- GEMINI API SETUP ---
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-CALENDAR_ID = os.getenv('CALENDAR_ID')
-SERVICE_ACCOUNT_JSON = base64.b64decode(os.getenv('SERVICE_ACCOUNT_JSON')).decode('utf-8')
+if not GEMINI_API_KEY:
+    print("✗ GEMINI_API_KEY environment variable not set!")
+    exit(1)
 
-# RUN_CLEANUP configuration
-RUN_CLEANUP = os.getenv('RUN_CLEANUP', 'false').lower() == 'true'
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
+CALENDAR_ID = os.getenv('CALENDAR_ID', 'd51d3fcd4e9f373b3766d9198129f7af868315252002d7c69a9281d359946e51@group.calendar.google.com')
 
-# Error handling and rate limiting
-def make_request(url, params):
+# --- 2. AI EVENT EXTRACTION FUNCTION ---
+def extract_events_with_ai(url, original_title, retries=2):
+    print(f"    > Detektīvs pārbauda: {url}")
+
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=15).read()
+            soup = BeautifulSoup(html, 'html.parser')
+            content = soup.get_text(separator=' ', strip=True)[:20000]
+
+            prompt = f"""
+Objective: Extract 2026 INLINE SPEED SKATING (skrituļslidošana) race dates.
+Context: The user is interested in '{original_title}'.
+
+Website content: {content}
+
+STRICT RULES:
+1. Extract ONLY inline speed skating events (look for terms like 'Inlineskaten', 'Rulluisutamine', 'Rychlobruslení').
+2. STERNLY REJECT all other sports (Volleyball, Beach Volleyball, Tennis, Football, Ice skating, etc.).
+3. For each event, return:
+   "title": (string),
+   "start_date": (YYYY-MM-DD),
+   "end_date": (YYYY-MM-DD, if multi-day. Use start_date if single day),
+   "location": (string).
+4. 14-Day Rule: If the gap between start and end is > 14 days, set end_date = start_date.
+5. Return STRICTLY a JSON array of objects. No markdown formatting.
+"""
+
+            response = ai_client.models.generate_content(
+                model='gemini-3.1-flash-lite-preview',
+                contents=prompt
+            )
+
+            clean_text = response.text.strip()
+            if clean_text.startswith("```"):
+                clean_text = clean_text.replace("```json", "").replace("```", "").strip()
+
+            events = json.loads(clean_text)
+            if isinstance(events, list):
+                return events, url
+            break
+        except Exception as e:
+            print(f"      [!] Mēģinājums {attempt+1} neizdevās: {e}")
+            time.sleep(5)
+
+    return [], url
+
+# --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
+def process_found_events(found_events, source_url, existing_events, original_desc=""):
+    for f_event in found_events:
+        start_date = f_event.get('start_date')
+        end_date = f_event.get('end_date') or start_date
+        title = f_event.get('title', 'Nezināms pasākums')
+        loc = f_event.get('location', '').strip()
+
+        if not start_date or not start_date.startswith("2026"):
+            continue
+
+        print(f"    -> Apstrādā: {title} ({start_date})")
+
+        # Smart duplicate detection
+        is_duplicate = False
+        matched_event = None
+        base_title_search = re.sub(r'2025|2026|25|26', '', title).strip().lower()
+        loc_words = set(re.findall(r'\b\w{4,}\b', loc.lower())) if loc and loc != "NOT_FOUND" else set()
+
+        for ext in existing_events:
+            ext_start = ext.get('start', {}).get('date')
+            ext_title = ext.get('summary', '').lower()
+            ext_loc = ext.get('location', '').lower()
+
+            if ext_start == start_date:
+                title_match = base_title_search and base_title_search in ext_title
+                loc_match = False
+                if loc_words:
+                    ext_words = set(re.findall(r'\b\w{4,}\b', ext_loc))
+                    if loc_words.intersection(ext_words):
+                        loc_match = True
+
+                if title_match or loc_match:
+                    is_duplicate = True
+                    matched_event = ext
+                    break
+
+        if is_duplicate:
+            print(f"      [IZLAISTS] Jau ir kalendārā. Atjaunojam saiti...")
+            desc = matched_event.get('description', '')
+            if source_url not in desc:
+                new_desc = desc + f"\n2026 link: {source_url}"
+                matched_event['description'] = new_desc
+                try:
+                    calendar_service.events().update(calendarId=CALENDAR_ID, eventId=matched_event['id'], body=matched_event).execute()
+                except Exception as e:
+                    print(f"      [!] Kļūda atjaunojot: {e}")
+        else:
+            # Create new calendar entry with proper end date handling
+            try:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+                final_end = end_dt.strftime("%Y-%m-%d")
+
+                new_desc = f"---Automātiski atjaunots---\n\n{original_desc}\n\n2026 link: {source_url}"
+
+                body = {
+                    'summary': title,
+                    'location': loc if loc != "NOT_FOUND" else "",
+                    'description': new_desc,
+                    'start': {'date': start_date},
+                    'end': {'date': final_end}
+                }
+
+                new_item = calendar_service.events().insert(calendarId=CALENDAR_ID, body=body).execute()
+                existing_events.append(new_item)
+                print(f"      [+] PIEVIENOTS: {title}")
+            except Exception as e:
+                print(f"      [!] Kļūda veidojot ierakstu: {e}")
+
+# --- 4. MAIN EXECUTION ---
+def run_agent():
+    print("Iegūst 2026. gada datus no kalendāra...")
     try:
-        response = requests.get(url, params=params, headers={'Authorization': f'Bearer {GEMINI_API_KEY}'})
-        response.raise_for_status()  # Raises an error for bad responses
-        return response.json()
-    except requests.exceptions.HTTPError as err:
-        print(f"HTTP error occurred: {err}")
-        # Implement rate limiting logic if necessary
+        events_2026 = calendar_service.events().list(
+            calendarId=CALENDAR_ID, timeMin="2026-01-01T00:00:00Z",
+            timeMax="2026-12-31T23:59:59Z", singleEvents=True, maxResults=2500
+        ).execute().get('items', [])
     except Exception as e:
-        print(f"An error occurred: {e}")
-
-
-def process_found_events(events):
-    unique_events = {}
-    # Deduplicate events based on a unique key (e.g., event ID)
-    for event in events:
-        unique_events[event['id']] = event
-    return list(unique_events.values())
-
-
-def clean_response_text(text):
-    # Implement response text cleaning logic here
-    return text.strip()
-
-
-def main():
-    # Your enhanced AI prompt logic here
-    # Adjusting end_date by adding 1 day
-    end_date = datetime.utcnow() + timedelta(days=1)
-
-    # Process events for 2025 and additional sources
-    events = []  # Fetch events from your sources
-    processed_events = process_found_events(events)
-
-    for event in processed_events:
-        event_text = clean_response_text(event.get('description', ''))
-        # Add logic to handle the migration of events here
+        print(f"Kļūda iegūstot kalendāru: {e}")
+        events_2026 = []
 
     if RUN_CLEANUP:
-        # Implement cleanup logic here
+        print("Tīrīšana...")
+        events_to_keep = []
+        for e in events_2026:
+            if "---Automātiski atjaunots---" in e.get('description', ''):
+                try:
+                    calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=e['id']).execute()
+                    time.sleep(0.3)
+                except:
+                    pass
+            else:
+                events_to_keep.append(e)
+        events_2026 = events_to_keep
+        print(f"✓ Tīrīšana pabeigta. Atrasti {len(events_2026)} manuāli veidoti ieraksti.\n")
+
+    # A. MIGRATION FROM 2025
+    print("\n--- Sākam migrāciju no 2025. gada ierakstiem ---")
+    try:
+        events_2025 = calendar_service.events().list(
+            calendarId=CALENDAR_ID, timeMin="2025-01-01T00:00:00Z",
+            timeMax="2025-12-31T23:59:59Z", singleEvents=True, orderBy='startTime'
+        ).execute().get('items', [])
+    except Exception as e:
+        print(f"Kļūda iegūstot 2025. gada kalendāru: {e}")
+        events_2025 = []
+
+    for ev in events_2025:
+        urls = re.findall(r'(https?://[^\s"<]+)', ev.get('description', ''))
+        if urls:
+            found, succ_url = extract_events_with_ai(urls[0], ev.get('summary'))
+            if found:
+                process_found_events(found, succ_url, events_2026, ev.get('description', ''))
+            time.sleep(12)
+
+    # B. ADDITIONAL SOURCES
+    print("\n--- Pārbaudām papildu avotus ---")
+    PAPILDU_SAITES = [
+        "https://inlinespeed.co.uk/events/event/page/2/",
+        "https://inlinespeed.co.uk/events/event/",
+        "https://szybkiewrotki.pl/lista-zawodow-2026/",
+        "https://bayerncup.de/news",
+        "https://ffroller-skateboard.fr/coupe-de-france-marathon-roller/carte-cfmr/",
+        "https://www.worldskate.org/speed/events-speed/competitions.html",
+        "https://www.schaatsen.nl/inlineskaten/",
+        "https://speedskater-gg.de/wettkaempfe/rennkalender/",
+        "https://www.klubluigino.sk/kalendar",
+        "https://sport-action.cz/inline-rychlobrusleni/inline-pohar-26/#skate",
+        "https://spordisarjad.ee/en/temposari",
+        "https://www.rekozemst.be/events/",
+        "https://www.schaatsen.nl/kalender/?discipline=Inlineskaten"
+    ]
+
+    for url in PAPILDU_SAITES:
+        print(f"\nPārbauda papildu avotu: {url}")
+        found, succ_url = extract_events_with_ai(url, "Inline skating calendar")
+        if found:
+            print(f"  [SUCCESS] Atrasti {len(found)} pasākumi jaunajā avotā!")
+            process_found_events(found, succ_url, events_2026, "Atrasts papildu avotā.")
+        else:
+            print(f"  [-] Šajā lapā vēl nav 2026. gada datumu.")
+        time.sleep(12)
+
+    print("\n✓ Migrācija pabeigta!")
 
 if __name__ == "__main__":
-    main()
+    run_agent()
