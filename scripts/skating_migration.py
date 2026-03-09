@@ -91,11 +91,10 @@ STRICT RULES:
             break
         except Exception as e:
             print(f"      [!] Mēģinājums {attempt+1} neizdevās: {e}")
-            time.sleep(5)
+            time.sleep(20)
 
     return [], url
 
-# --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
 # --- 3. HELPER FUNCTION FOR EVENT PROCESSING & DEDUPLICATION ---
 def process_found_events(found_events, source_url, existing_events, original_desc=""):
     for f_event in found_events:
