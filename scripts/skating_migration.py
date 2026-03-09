@@ -258,7 +258,8 @@ def run_agent():
         "https://sport-action.cz/inline-rychlobrusleni/inline-pohar-26/#skate",
         "https://spordisarjad.ee/en/temposari",
         "https://www.rekozemst.be/events/",
-        "https://www.schaatsen.nl/kalender/?discipline=Inlineskaten"
+        "https://www.schaatsen.nl/kalender/?discipline=Inlineskaten",
+        "https://www.world-inline-cup.com/races"
     ]
 
     for url in PAPILDU_SAITES:
