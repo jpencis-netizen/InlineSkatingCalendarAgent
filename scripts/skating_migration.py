@@ -157,10 +157,10 @@ def process_found_events(found_events, source_url, existing_events, original_des
     for f_event in found_events:
         start_date = f_event.get('start_date')
         end_date = f_event.get('end_date') or start_date
-        title = f_event.get('title', 'Nezināms pasākums')
-        loc = f_event.get('location', '').strip()
+        title = f_event.get('title') or 'Unknown event'
+        loc = (f_event.get('location') or '').strip()
 
-        if not start_date or not start_date.startswith("2026"):
+        if not start_date or not isinstance(start_date, str) or not start_date.startswith("2026"):
             continue
 
         # --- 14 DIENU PĀRBAUDE (Pievienots atpakaļ) ---
