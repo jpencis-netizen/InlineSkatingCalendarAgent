@@ -56,7 +56,7 @@ def extract_events_with_ai(url, original_title, retries=4):
             current_model = 'gemini-3.1-flash-lite-preview'
         else:
             # Piezīme: Pārbaudi precīzu modeļa nosaukumu savā sarakstā. 
-            current_model = 'gemma-2-27b-it'
+            current_model = 'gemma-3-27b-it'
             
         try:
             print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {current_model}")
