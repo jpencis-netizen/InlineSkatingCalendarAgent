@@ -269,23 +269,23 @@ def run_agent():
 
     # A. MIGRATION FROM 2025
     if RUN_MIGRATION:
-    print("\n--- Sākam migrāciju no 2025. gada ierakstiem ---")
-    try:
-        events_2025 = calendar_service.events().list(
-            calendarId=CALENDAR_ID, timeMin="2025-01-01T00:00:00Z",
-            timeMax="2025-12-31T23:59:59Z", singleEvents=True, orderBy='startTime'
-        ).execute().get('items', [])
-    except Exception as e:
-        print(f"Kļūda iegūstot 2025. gada kalendāru: {e}")
-        events_2025 = []
+        print("\n--- Sākam migrāciju no 2025. gada ierakstiem ---")
+        try:
+            events_2025 = calendar_service.events().list(
+                calendarId=CALENDAR_ID, timeMin="2025-01-01T00:00:00Z",
+                timeMax="2025-12-31T23:59:59Z", singleEvents=True, orderBy='startTime'
+            ).execute().get('items', [])
+        except Exception as e:
+            print(f"Kļūda iegūstot 2025. gada kalendāru: {e}")
+            events_2025 = []
 
-    for ev in events_2025:
-        urls = re.findall(r'(https?://[^\s"<]+)', ev.get('description', ''))
-        if urls:
-            found, succ_url = extract_events_with_ai(urls[0], ev.get('summary'))
-            if found:
-                process_found_events(found, succ_url, events_2026, ev.get('description', ''))
-            time.sleep(12)
+        for ev in events_2025:
+            urls = re.findall(r'(https?://[^\s"<]+)', ev.get('description', ''))
+            if urls:
+                found, succ_url = extract_events_with_ai(urls[0], ev.get('summary'))
+                if found:
+                    process_found_events(found, succ_url, events_2026, ev.get('description', ''))
+                time.sleep(12)
     else:
         print("\n--- A. Kalendāra migrācija IZLAISTA (Pēc lietotāja izvēles) ---")
         
