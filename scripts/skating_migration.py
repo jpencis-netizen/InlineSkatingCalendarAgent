@@ -57,7 +57,7 @@ def extract_events_with_ai(url, original_title, retries=4):
     for attempt in range(retries):
            
         try:
-            print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {current_model}")
+            print(f"      [~] Mēģinājums {attempt+1} izmanto modeli: {ACTIVE_MODEL}")
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             html = urllib.request.urlopen(req, timeout=15).read()
             soup = BeautifulSoup(html, 'html.parser')
