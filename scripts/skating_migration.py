@@ -13,7 +13,8 @@ import os
 import base64
 
 # --- CONFIGURATION ---
-RUN_CLEANUP = os.getenv('RUN_CLEANUP', 'true').lower() == 'true'
+RUN_CLEANUP = os.getenv('RUN_CLEANUP', 'false').lower() == 'true'
+RUN_MIGRATION = os.getenv('RUN_MIGRATION', 'false').lower() == 'true'
 
 # --- 1. SETUP & AUTHENTICATION ---
 print("Autentifikācija...")
@@ -267,6 +268,7 @@ def run_agent():
         print(f"✓ Tīrīšana pabeigta. Atrasti {len(events_2026)} manuāli veidoti ieraksti.\n")
 
     # A. MIGRATION FROM 2025
+    if RUN_MIGRATION:
     print("\n--- Sākam migrāciju no 2025. gada ierakstiem ---")
     try:
         events_2025 = calendar_service.events().list(
@@ -284,7 +286,9 @@ def run_agent():
             if found:
                 process_found_events(found, succ_url, events_2026, ev.get('description', ''))
             time.sleep(12)
-
+    else:
+        print("\n--- A. Kalendāra migrācija IZLAISTA (Pēc lietotāja izvēles) ---")
+        
     # B. ADDITIONAL SOURCES
     print("\n--- Pārbaudām papildu avotus ---")
     PAPILDU_SAITES = [
