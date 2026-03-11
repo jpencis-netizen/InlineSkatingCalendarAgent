@@ -305,7 +305,8 @@ def run_agent():
         "https://spordisarjad.ee/en/temposari",
         "https://www.rekozemst.be/events/",
         "https://www.schaatsen.nl/kalender/?discipline=Inlineskaten",
-        "https://www.world-inline-cup.com/races"
+        "https://www.world-inline-cup.com/races",
+        "https://skateresults.app/events"
     ]
 
     for url in PAPILDU_SAITES:
